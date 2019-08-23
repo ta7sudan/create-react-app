@@ -27,17 +27,20 @@ const WorkboxWebpackPlugin = require('workbox-webpack-plugin');
 const WatchMissingNodeModulesPlugin = require('react-dev-utils/WatchMissingNodeModulesPlugin');
 const ModuleScopePlugin = require('react-dev-utils/ModuleScopePlugin');
 const getCSSModuleLocalIdent = require('react-dev-utils/getCSSModuleLocalIdent');
+const HTMLTagAttrPlugin = require('html-tag-attributes-plugin');
+const WebpackDeepScopeAnalysisPlugin = require('webpack-deep-scope-plugin')
+  .default;
+const PreloadWebpackPlugin = require('@lowb/preload-webpack-plugin');
 const paths = require('./paths');
 const modules = require('./modules');
 const getClientEnvironment = require('./env');
 const ModuleNotFoundPlugin = require('react-dev-utils/ModuleNotFoundPlugin');
 const ForkTsCheckerWebpackPlugin = require('react-dev-utils/ForkTsCheckerWebpackPlugin');
 const typescriptFormatter = require('react-dev-utils/typescriptFormatter');
-const eslint = require('eslint');
+const overrides = require('./overrides');
 // @remove-on-eject-begin
 const getCacheIdentifier = require('react-dev-utils/getCacheIdentifier');
 // @remove-on-eject-end
-const postcssNormalize = require('postcss-normalize');
 
 const appPackageJson = require(paths.appPackageJson);
 
@@ -48,7 +51,15 @@ const shouldUseSourceMap = process.env.GENERATE_SOURCEMAP !== 'false';
 const shouldInlineRuntimeChunk = process.env.INLINE_RUNTIME_CHUNK !== 'false';
 
 const imageInlineSizeLimit = parseInt(
-  process.env.IMAGE_INLINE_SIZE_LIMIT || '10000'
+  process.env.IMAGE_INLINE_SIZE_LIMIT || '10240'
+);
+
+const fontInlineSizeLimit = parseInt(
+  process.env.FONT_INLINE_SIZE_LIMIT || '10240'
+);
+
+const audioInlineSizeLimit = parseInt(
+  process.env.AUDIO_INLINE_SIZE_LIMIT || '10240'
 );
 
 // Check if TypeScript is setup
@@ -87,6 +98,49 @@ module.exports = function(webpackEnv) {
 
   // common function to get style loaders
   const getStyleLoaders = (cssOptions, preProcessor) => {
+    let postcssPlugins = [
+      require('postcss-flexbugs-fixes'),
+      require('postcss-preset-env')({
+        autoprefixer: {
+          flexbox: 'no-2009',
+        },
+        stage: 3,
+      }),
+      require('precss'),
+      require('postcss-automath'),
+      require('postcss-hexrgba'),
+      require('postcss-sprites')({
+        filterBy(img) {
+          if (img.url.includes('nosprites')) {
+            return Promise.reject();
+          }
+          return Promise.resolve();
+          // },
+          // TODO
+          // groupBy(img) {
+        },
+      }),
+      require('postcss-functions')({
+        functions: {
+          // 注意不要指望这里的函数返回一些rule能被后续的插件处理,
+          // 这里返回的字符串是不会被重新生成AST的结点的
+          even(val) {
+            val = parseFloat(val);
+            // 减小误差
+            return `${
+              Math.floor(val) % 2 ? Math.floor(val) + 1 : Math.floor(val)
+            }px`;
+          },
+        },
+      }),
+      // 这个放最后, 不然可能functions里有px而不会被转换,
+      // 或是sprites有px也不会被转换
+      overrides.mobile && require('postcss-convertpx'),
+    ].filter(Boolean);
+
+    if (typeof overrides.postcss === 'function') {
+      postcssPlugins = overrides.postcss(postcssPlugins);
+    }
     const loaders = [
       isEnvDevelopment && require.resolve('style-loader'),
       isEnvProduction && {
@@ -106,19 +160,7 @@ module.exports = function(webpackEnv) {
           // Necessary for external CSS imports to work
           // https://github.com/facebook/create-react-app/issues/2677
           ident: 'postcss',
-          plugins: () => [
-            require('postcss-flexbugs-fixes'),
-            require('postcss-preset-env')({
-              autoprefixer: {
-                flexbox: 'no-2009',
-              },
-              stage: 3,
-            }),
-            // Adds PostCSS Normalize as the reset css with default options,
-            // so that it honors browserslist config in package.json
-            // which in turn let's users customize the target behavior as per their needs.
-            postcssNormalize(),
-          ],
+          plugins: () => postcssPlugins,
           sourceMap: isEnvProduction && shouldUseSourceMap,
         },
       },
@@ -142,7 +184,8 @@ module.exports = function(webpackEnv) {
     return loaders;
   };
 
-  return {
+  let webpackConfig = {
+    target: 'web',
     mode: isEnvProduction ? 'production' : isEnvDevelopment && 'development',
     // Stop compilation early in production
     bail: isEnvProduction,
@@ -202,6 +245,12 @@ module.exports = function(webpackEnv) {
       // Prevents conflicts when multiple Webpack runtimes (from different apps)
       // are used on the same page.
       jsonpFunction: `webpackJsonp${appPackageJson.name}`,
+      crossOriginLoading:
+        typeof overrides.crossorigin === 'string'
+          ? overrides.crossorigin
+          : overrides.crossorigin
+          ? 'anonymous'
+          : undefined,
     },
     optimization: {
       minimize: isEnvProduction,
@@ -280,6 +329,7 @@ module.exports = function(webpackEnv) {
       runtimeChunk: true,
     },
     resolve: {
+      mainFields: ['module', 'jsnext:main', 'browser', 'main'],
       // This allows you to set a fallback for where Webpack should look for modules.
       // We placed these paths second because we want `node_modules` to "win"
       // if there are any conflicts. This matches Node resolution mechanism.
@@ -331,38 +381,14 @@ module.exports = function(webpackEnv) {
         {
           test: /\.(js|mjs|jsx|ts|tsx)$/,
           enforce: 'pre',
-          use: [
-            {
-              options: {
-                formatter: require.resolve('react-dev-utils/eslintFormatter'),
-                eslintPath: require.resolve('eslint'),
-                resolvePluginsRelativeTo: __dirname,
-                // @remove-on-eject-begin
-                baseConfig: (() => {
-                  const eslintCli = new eslint.CLIEngine();
-                  let eslintConfig;
-                  try {
-                    eslintConfig = eslintCli.getConfigForFile(paths.appIndexJs);
-                  } catch (e) {
-                    // A config couldn't be found.
-                  }
-
-                  // We allow overriding the config only if the env variable is set
-                  if (process.env.EXTEND_ESLINT && eslintConfig) {
-                    return eslintConfig;
-                  } else {
-                    return {
-                      extends: [require.resolve('eslint-config-react-app')],
-                    };
-                  }
-                })(),
-                ignore: false,
-                useEslintrc: false,
-                // @remove-on-eject-end
-              },
-              loader: require.resolve('eslint-loader'),
-            },
-          ],
+          loader: require.resolve('eslint-loader'),
+          options: {
+            eslintPath: require.resolve('eslint'),
+            useEslintrc: true,
+            failOnError: false,
+            emitWarning: false,
+            emitError: false,
+          },
           include: paths.appSrc,
         },
         {
@@ -374,11 +400,36 @@ module.exports = function(webpackEnv) {
             // smaller than specified limit in bytes as data URLs to avoid requests.
             // A missing `test` is equivalent to a match.
             {
-              test: [/\.bmp$/, /\.gif$/, /\.jpe?g$/, /\.png$/],
+              test: [/\.bmp$/, /\.gif$/, /\.jpe?g$/, /\.png$/, /\.webp$/],
               loader: require.resolve('url-loader'),
               options: {
                 limit: imageInlineSizeLimit,
-                name: 'static/media/[name].[hash:8].[ext]',
+                name: 'static/images/[name].[hash:8].[ext]',
+              },
+            },
+            {
+              test: /\.svg$/,
+              loader: require.resolve('svg-url-loader'),
+              options: {
+                limit: imageInlineSizeLimit,
+                stripdeclarations: true,
+                name: 'static/images/[name].[hash:8].[ext]',
+              },
+            },
+            {
+              test: /\.(mp4|webm|ogg|mp3|wav|flac|aac)(\?.*)?$/,
+              loader: require.resolve('url-loader'),
+              options: {
+                limit: audioInlineSizeLimit,
+                name: 'static/audios/[name].[hash:8].[ext]',
+              },
+            },
+            {
+              test: /\.(woff2?|eot|ttf|otf)(\?.*)?$/i,
+              loader: require.resolve('url-loader'),
+              options: {
+                limit: fontInlineSizeLimit,
+                name: 'static/fonts/[name].[hash:8].[ext]',
               },
             },
             // Process application JS with Babel.
@@ -394,6 +445,7 @@ module.exports = function(webpackEnv) {
                 // @remove-on-eject-begin
                 babelrc: false,
                 configFile: false,
+                // 里面的preset-env已经给了loose和modules false, 就不加了
                 presets: [require.resolve('babel-preset-react-app')],
                 // Make sure we have a unique cache identifier, erring on the
                 // side of caution.
@@ -413,6 +465,7 @@ module.exports = function(webpackEnv) {
                 ),
                 // @remove-on-eject-end
                 plugins: [
+                  'array-includes',
                   [
                     require.resolve('babel-plugin-named-asset-import'),
                     {
@@ -558,6 +611,7 @@ module.exports = function(webpackEnv) {
       ],
     },
     plugins: [
+      isEnvProduction && new WebpackDeepScopeAnalysisPlugin(),
       // Generates an `index.html` file with the <script> injected.
       new HtmlWebpackPlugin(
         Object.assign(
@@ -584,6 +638,42 @@ module.exports = function(webpackEnv) {
             : undefined
         )
       ),
+      new PreloadWebpackPlugin({
+        rel: 'preload',
+        include: 'initial',
+        as(entry) {
+          if (/\.css$/.test(entry)) {
+            return 'style';
+          } else if (/\.js$/.test(entry)) {
+            return 'script';
+          } else {
+            return 'script';
+          }
+        },
+        crossorigin: overrides.crossorigin
+          ? entry => {
+              if (/\.js$/.test(entry))
+                return typeof overrides.crossorigin === 'string'
+                  ? overrides.crossorigin
+                  : 'anonymous';
+            }
+          : undefined,
+      }),
+      overrides.crossorigin &&
+        new HTMLTagAttrPlugin({
+          link: {
+            crossorigin:
+              typeof overrides.crossorigin === 'string'
+                ? overrides.crossorigin
+                : 'anonymous',
+          },
+          script: {
+            crossorigin:
+              typeof overrides.crossorigin === 'string'
+                ? overrides.crossorigin
+                : 'anonymous',
+          },
+        }),
       // Inlines the webpack runtime script. This script is too small to warrant
       // a network request.
       isEnvProduction &&
@@ -710,4 +800,8 @@ module.exports = function(webpackEnv) {
     // our own hints via the FileSizeReporter
     performance: false,
   };
+  if (typeof overrides.webpack === 'function') {
+    webpackConfig = overrides.webpack(webpackConfig);
+  }
+  return webpackConfig;
 };

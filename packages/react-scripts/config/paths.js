@@ -14,11 +14,15 @@ const url = require('url');
 
 // Make sure any symlinks in the project folder are resolved:
 // https://github.com/facebook/create-react-app/issues/637
+// 找到项目根目录
 const appDirectory = fs.realpathSync(process.cwd());
+// 将项目中相对路径处理成绝对路径的函数
 const resolveApp = relativePath => path.resolve(appDirectory, relativePath);
 
+// 取得环境变量中的PUBLIC_URL, 之后会作为publichPath
 const envPublicUrl = process.env.PUBLIC_URL;
 
+// 给定一个路径inputPath, 根据needsSlash决定是否返回带末尾/和不带末尾/的路径
 function ensureSlash(inputPath, needsSlash) {
   const hasSlash = inputPath.endsWith('/');
   if (hasSlash && !needsSlash) {
@@ -30,6 +34,8 @@ function ensureSlash(inputPath, needsSlash) {
   }
 }
 
+// 给定一个package.json路径, 优先使用环境变量的PUBLIC_URL作为publicPath, 否则使用
+// package.json中的homepage字段作为publicPath
 const getPublicUrl = appPackageJson =>
   envPublicUrl || require(appPackageJson).homepage;
 
@@ -77,6 +83,7 @@ const resolveModule = (resolveFn, filePath) => {
 module.exports = {
   dotenv: resolveApp('.env'),
   appPath: resolveApp('.'),
+  overridesFile: resolveApp('overrides.js'),
   appBuild: resolveApp('build'),
   appPublic: resolveApp('public'),
   appHtml: resolveApp('public/index.html'),

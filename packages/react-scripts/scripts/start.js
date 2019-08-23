@@ -91,6 +91,7 @@ checkBrowsers(paths.appPath, isInteractive)
       // We have not found a port.
       return;
     }
+    // 这里根据不同环境创建不同webpack配置
     const config = configFactory('development');
     const protocol = process.env.HTTPS === 'true' ? 'https' : 'http';
     const appName = require(paths.appPackageJson).name;
