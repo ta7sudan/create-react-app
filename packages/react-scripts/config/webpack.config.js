@@ -748,9 +748,11 @@ module.exports = function(webpackEnv) {
           chunkFilename: 'static/css/[name].[contenthash:8].chunk.css',
         }),
       isEnvProduction &&
+        overrides.enableBundleAnalyzer &&
         new WebpackBundleAnalyzer({
           analyzerMode: 'static',
           defaultSizes: 'parsed',
+          openAnalyzer: false,
         }),
       // Generate a manifest file which contains a mapping of all asset filenames
       // to their corresponding output file so that tools can pick it up without
