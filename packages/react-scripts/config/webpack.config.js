@@ -673,7 +673,7 @@ module.exports = function(webpackEnv) {
         rel: 'preload',
         include: 'initial',
         // runtime被内联到html, preload中去掉它
-        fileBlacklist: [/runtime.+[.]js/],
+        fileBlacklist: [/runtime.+[.]js/, /\.map$/],
         as(entry) {
           if (/\.css$/.test(entry)) {
             return 'style';
